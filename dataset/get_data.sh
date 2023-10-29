@@ -1,14 +1,9 @@
 python get_data.py
-
-unzip python.zip
-unzip java.zip
-unzip ruby.zip
-unzip javascript.zip
-unzip go.zip
-unzip php.zip
-rm *.zip
-rm *.pkl
-
 python preprocess.py
-rm -r */final
-cd ..
+
+rm -r go/go
+rm -r java/java
+rm -r javascript/javascript
+rm -r php/php
+rm -r python/python
+rm -r ruby/ruby
