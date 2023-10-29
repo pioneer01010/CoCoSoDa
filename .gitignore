@@ -7,3 +7,4 @@ merges.txt
 *.pkl
 *.jsonl
 *.json
+.venv/
