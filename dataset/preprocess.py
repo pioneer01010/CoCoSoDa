@@ -18,6 +18,16 @@ for language in ['ruby','go','java','javascript','php','python']:
                     codebase.append(temp)
                     
     train_data,valid_data,test_data,codebase_data={},{},{},{}
+    for files,data in [[train,train_data],[valid,valid_data],[test,test_data],[codebase,codebase_data]]:
+            for file in files:
+                if '.gz' in file:
+                    os.system("gzip -d {}".format(file))
+                    file=file.replace('.gz','')
+                with open(file) as f:
+                    for line in f:
+                        line=line.strip()
+                        js=json.loads(line)
+                        data[js['url']]=js
                         
     with open('{}/codebase.jsonl'.format(language),'w') as f3:
         for tag,data in [['train',train_data],['valid',valid_data],['test',test_data],['test',test_data],['codebase',codebase_data]]:
