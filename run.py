@@ -31,7 +31,7 @@ import json
 from random import choice
 import numpy as np
 from itertools import cycle
-from model import Model,Multi_Loss_CoCoSoDa
+from model import CleanCode_Model
 from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler
 from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
@@ -109,16 +109,11 @@ def lalign(x, y, alpha=2):
     x = torch.tensor(x)
     y= torch.tensor(y)
     return (x - y).norm(dim=1).pow(alpha).mean()
-    # code2nl_pos = torch.einsum('nc,nc->n', [x, y]).unsqueeze(-1)
-
-    # return code2nl_pos.mean()
 
 def lunif(x, t=2):
     x = torch.tensor(x)
     sq_pdist = torch.pdist(x, p=2).pow(2)
     return sq_pdist.mul(-t).exp().mean().log()
-
-
 
 def cal_r1_r5_r10(ranks):
     r1,r5,r10= 0,0,0
@@ -195,58 +190,30 @@ def tokenizer_source_code(code, parser,lang):
         dfg=[]
     return code_tokens
 
-class InputFeatures(object):
+
+class InputFeaturesCleanCode(object):
     """A single training/test features for a example."""
     def __init__(self,
                  code_tokens,
-                 code_ids,
-                #  position_idx,
-                #  dfg_to_code,
-                #  dfg_to_dfg,                 
-                 nl_tokens,
-                 nl_ids,
+                 code_ids,          
+                 clcode_tokens,
+                 clcode_ids,
                  url,
 
     ):
         self.code_tokens = code_tokens
-        self.code_ids = code_ids
-        # self.position_idx=position_idx
-        # self.dfg_to_code=dfg_to_code
-        # self.dfg_to_dfg=dfg_to_dfg        
-        self.nl_tokens = nl_tokens
-        self.nl_ids = nl_ids
-        self.url=url
-
-
-class TypeAugInputFeatures(object):
-    """A single training/test features for a example."""
-    def __init__(self,
-                 code_tokens,
-                 code_ids,
-                #  position_idx,
-                 code_type,
-                 code_type_ids,                 
-                 nl_tokens,
-                 nl_ids,
-                 url,
-
-    ):
-        self.code_tokens = code_tokens
-        self.code_ids = code_ids
-        # self.position_idx=position_idx
-        self.code_type=code_type
-        self.code_type_ids=code_type_ids        
-        self.nl_tokens = nl_tokens
-        self.nl_ids = nl_ids
+        self.code_ids = code_ids   
+        self.clcode_tokens = clcode_tokens
+        self.clcode_ids = clcode_ids
         self.url=url
 
 def convert_examples_to_features(js):
     js,tokenizer,args=js
-    #code
     if args.lang == "java_mini":
         parser=parsers["java"]
     else:
         parser=parsers[js["language"]]
+
     # code
     code_tokens=tokenizer_source_code(js['original_string'],parser,args.lang)
     code_tokens=" ".join(code_tokens[:args.code_length-2])
@@ -256,55 +223,16 @@ def convert_examples_to_features(js):
     padding_length = args.code_length - len(code_ids)
     code_ids+=[tokenizer.pad_token_id]*padding_length   
 
-    #nl
-    nl=' '.join(js['docstring_tokens'])
-    nl_tokens=tokenizer.tokenize(nl)[:args.nl_length-2]
-    nl_tokens =[tokenizer.cls_token]+nl_tokens+[tokenizer.sep_token]
-    nl_ids =  tokenizer.convert_tokens_to_ids(nl_tokens)
-    padding_length = args.nl_length - len(nl_ids)
-    nl_ids+=[tokenizer.pad_token_id]*padding_length  
+    # clean code
+    clcode_tokens=tokenizer_source_code(js['clean_string'],parser,args.lang)
+    clcode_tokens=" ".join(clcode_tokens[:args.clcode_length-2])
+    clcode_tokens=tokenizer.tokenize(clcode_tokens)[:args.clcode_length-2]
+    clcode_tokens =[tokenizer.cls_token]+clcode_tokens+[tokenizer.sep_token]
+    clcode_ids =  tokenizer.convert_tokens_to_ids(clcode_tokens)
+    padding_length = args.clcode_length - len(clcode_ids)
+    clcode_ids+=[tokenizer.pad_token_id]*padding_length 
 
-    return InputFeatures(code_tokens,code_ids,nl_tokens,nl_ids,js['url'])
-
-
-def convert_examples_to_features_aug_type(js):
-    js,tokenizer,args=js
-    #code
-    if args.lang == "java_mini":
-        parser=parsers["java"]
-    else:
-        parser=parsers[js["language"]]
-    # code
-    token_type_role = js[ 'bpe_token_type_role']
-    code_token = [item[0] for item in token_type_role]
-    # code = ' '.join(code_token[:args.code_length-4])
-    # code_tokens = tokenizer.tokenize(code)[:args.code_length-4]
-    code_tokens = code_token[:args.code_length-4]
-    code_tokens =[tokenizer.cls_token,"<encoder-only>",tokenizer.sep_token]+code_tokens+[tokenizer.sep_token]
-    code_ids = tokenizer.convert_tokens_to_ids(code_tokens)
-    padding_length = args.code_length - len(code_ids)
-    code_ids += [tokenizer.pad_token_id]*padding_length
-
-    # code type
-    code_type_token = [item[-1] for item in token_type_role]
-    # code_type= ' '.join(code_type_token[:args.code_length-4])
-    # code_type_tokens = tokenizer.tokenize(code_type)[:args.code_length-4]
-    code_type_tokens = code_type_token[:args.code_length-4]
-    code_type_tokens =[tokenizer.cls_token,"<encoder-only>",tokenizer.sep_token]+code_type_tokens+[tokenizer.sep_token]
-    code_type_ids = tokenizer.convert_tokens_to_ids(code_type_tokens)
-    padding_length = args.code_length - len(code_type_ids)
-    code_type_ids += [tokenizer.pad_token_id]*padding_length
-
-    #nl
-    nl=' '.join(js['docstring_tokens'])
-    nl_tokens = tokenizer.tokenize(nl)[:args.nl_length-4]
-    nl_tokens = [tokenizer.cls_token,"<encoder-only>",tokenizer.sep_token]+nl_tokens+[tokenizer.sep_token]
-    nl_ids = tokenizer.convert_tokens_to_ids(nl_tokens)
-    padding_length = args.nl_length - len(nl_ids)
-    nl_ids += [tokenizer.pad_token_id]*padding_length 
-
-    return TypeAugInputFeatures(code_tokens,code_ids,code_type_tokens,code_type_ids,nl_tokens,nl_ids,js['url'])
-  
+    return InputFeaturesCleanCode(code_tokens,code_ids,clcode_tokens,clcode_ids,js['url'])
 
 class TextDataset(Dataset):
     def __init__(self, tokenizer, args, file_path=None,pool=None):
@@ -312,8 +240,6 @@ class TextDataset(Dataset):
         prefix=file_path.split('/')[-1][:-6]
         cache_file=args.output_dir+'/'+prefix+'.pkl'
         n_debug_samples = args.n_debug_samples
-        # if 'codebase' in file_path:
-        #     n_debug_samples = 100000
         if 'train' in file_path:
             self.split = "train"
         else:
@@ -340,10 +266,7 @@ class TextDataset(Dataset):
                         js=json.loads(line)
                         data.append((js,tokenizer,args))
             
-            if self.args.data_aug_type == "replace_type":
-                self.examples=pool.map(convert_examples_to_features_aug_type, tqdm(data,total=len(data)))
-            else:
-                self.examples=pool.map(convert_examples_to_features, tqdm(data,total=len(data)))
+            self.examples=pool.map(convert_examples_to_features, tqdm(data,total=len(data)))
             
         if 'train' in file_path:
             for idx, example in enumerate(self.examples[:3]):
@@ -351,92 +274,17 @@ class TextDataset(Dataset):
                 logger.info("idx: {}".format(idx))
                 logger.info("code_tokens: {}".format([x.replace('\u0120','_') for x in example.code_tokens]))
                 logger.info("code_ids: {}".format(' '.join(map(str, example.code_ids))))             
-                logger.info("nl_tokens: {}".format([x.replace('\u0120','_') for x in example.nl_tokens]))
-                logger.info("nl_ids: {}".format(' '.join(map(str, example.nl_ids))))          
+                logger.info("clcode_tokens: {}".format([x.replace('\u0120','_') for x in example.clcode_tokens]))
+                logger.info("clcode_ids: {}".format(' '.join(map(str, example.clcode_ids))))          
                 
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, item): 
-        if self.args.data_aug_type == "replace_type":
-            return (torch.tensor(self.examples[item].code_ids),
-                    torch.tensor(self.examples[item].code_type_ids),
-                    torch.tensor(self.examples[item].nl_ids))
-        else:
-            return (torch.tensor(self.examples[item].code_ids),
-                    torch.tensor(self.examples[item].nl_ids))
+        return (torch.tensor(self.examples[item].code_ids),
+                    torch.tensor(self.examples[item].clcode_ids))
 
-        
-def convert_examples_to_features_unixcoder(js,tokenizer,args):
-    """convert examples to token ids"""
-    code = ' '.join(js['code_tokens']) if type(js['code_tokens']) is list else ' '.join(js['code_tokens'].split())
-    code_tokens = tokenizer.tokenize(code)[:args.code_length-4]
-    code_tokens =[tokenizer.cls_token,"<encoder-only>",tokenizer.sep_token]+code_tokens+[tokenizer.sep_token]
-    code_ids = tokenizer.convert_tokens_to_ids(code_tokens)
-    padding_length = args.code_length - len(code_ids)
-    code_ids += [tokenizer.pad_token_id]*padding_length
-    
-    nl = ' '.join(js['docstring_tokens']) if type(js['docstring_tokens']) is list else ' '.join(js['doc'].split())
-    nl_tokens = tokenizer.tokenize(nl)[:args.nl_length-4]
-    nl_tokens = [tokenizer.cls_token,"<encoder-only>",tokenizer.sep_token]+nl_tokens+[tokenizer.sep_token]
-    nl_ids = tokenizer.convert_tokens_to_ids(nl_tokens)
-    padding_length = args.nl_length - len(nl_ids)
-    nl_ids += [tokenizer.pad_token_id]*padding_length    
-    
-    return InputFeatures(code_tokens,code_ids,nl_tokens,nl_ids,js['url'] if "url" in js else js["retrieval_idx"])
-
-class TextDataset_unixcoder(Dataset):
-    def __init__(self, tokenizer, args, file_path=None, pooler=None):
-        self.examples = []
-        data = []
-        n_debug_samples = args.n_debug_samples
-        with open(file_path) as f:
-            if "jsonl" in file_path:
-                for line in f:
-                    line = line.strip()
-                    js = json.loads(line)
-                    if 'function_tokens' in js:
-                        js['code_tokens'] = js['function_tokens']
-                    data.append(js)
-                    if args.debug  and len(data) >= n_debug_samples:
-                            break
-            elif "codebase"in file_path or "code_idx_map" in file_path:
-                js = json.load(f)
-                for key in js:
-                    temp = {}
-                    temp['code_tokens'] = key.split()
-                    temp["retrieval_idx"] = js[key]
-                    temp['doc'] = ""
-                    temp['docstring_tokens'] = ""
-                    data.append(temp)
-                    if  args.debug  and len(data) >= n_debug_samples:
-                            break
-            elif "json" in file_path:
-                for js in json.load(f):
-                    data.append(js)
-                    if args.debug and len(data) >= n_debug_samples:
-                            break 
-        # if "test" in file_path:
-        #     data = data[-200:]
-        for js in data:
-            self.examples.append(convert_examples_to_features_unixcoder(js,tokenizer,args))
-                
-        if "train" in file_path:
-            # self.examples = self.examples[:128]
-            for idx, example in enumerate(self.examples[:3]):
-                logger.info("*** Example ***")
-                logger.info("idx: {}".format(idx))
-                logger.info("code_tokens: {}".format([x.replace('\u0120','_') for x in example.code_tokens]))
-                logger.info("code_ids: {}".format(' '.join(map(str, example.code_ids))))
-                logger.info("nl_tokens: {}".format([x.replace('\u0120','_') for x in example.nl_tokens]))
-                logger.info("nl_ids: {}".format(' '.join(map(str, example.nl_ids))))                             
-        
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i):   
-        return (torch.tensor(self.examples[i].code_ids),torch.tensor(self.examples[i].nl_ids))
-            
+     
 def set_seed(seed=42):
     random.seed(seed)
     os.environ['PYHTONHASHSEED'] = str(seed)
@@ -446,96 +294,12 @@ def set_seed(seed=42):
     torch.cuda.manual_seed_all(seed)  # all gpus
     torch.backends.cudnn.deterministic = True
 
-
-def mask_tokens(inputs,tokenizer,mlm_probability):
-    """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
-    labels = inputs.clone()
-    # We sample a few tokens in each sequence for masked-LM training (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
-    probability_matrix = torch.full(labels.shape, mlm_probability).to(inputs.device)
-    special_tokens_mask = [tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in
-                           labels.tolist()] # for masking special token
-    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool).to(inputs.device), value=0.0)
-    if tokenizer._pad_token is not None:
-        padding_mask = labels.eq(tokenizer.pad_token_id)
-        probability_matrix.masked_fill_(padding_mask, value=0.0) # masked padding
-        
-    masked_indices = torch.bernoulli(probability_matrix).bool() # will decide who will be masked
-    labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-    # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-    indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool().to(inputs.device) & masked_indices
-    inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
-
-    # 10% of the time, we replace masked input tokens with random word
-    indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool().to(inputs.device) & masked_indices & ~indices_replaced
-    random_words = torch.randint(len(tokenizer), labels.shape, dtype=torch.long).to(inputs.device)
-    inputs[indices_random] = random_words[indices_random]
-
-    # The rest of the time (10% of the time) we keep the masked input tokens unchanged
-    return inputs, labels
-
-
-def replace_with_type_tokens(inputs,replaces,tokenizer,mlm_probability):
-    """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
-    labels = inputs.clone()
-    # We sample a few tokens in each sequence for masked-LM training (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
-    probability_matrix = torch.full(labels.shape, mlm_probability).to(inputs.device)
-    special_tokens_mask = [tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in
-                           labels.tolist()] # for masking special token
-    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool).to(inputs.device), value=0.0)
-    if tokenizer._pad_token is not None:
-        padding_mask = labels.eq(tokenizer.pad_token_id)
-        probability_matrix.masked_fill_(padding_mask, value=0.0) # masked padding
-        
-    masked_indices = torch.bernoulli(probability_matrix).bool() # will decide who will be masked
-    labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-    # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-    indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool().to(inputs.device) & masked_indices
-    inputs[indices_replaced] = replaces[indices_replaced] 
-
-    return inputs, labels
-
-def replace_special_token_with_type_tokens(inputs, speical_token_ids, tokenizer, mlm_probability):
-    """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
-    labels = inputs.clone()
-    probability_matrix = torch.full(labels.shape,0.0).to(inputs.device)   
-    probability_matrix.masked_fill_(labels.eq(speical_token_ids).to(inputs.device), value=mlm_probability)
-    masked_indices = torch.bernoulli(probability_matrix).bool() # will decide who will be masked
-    labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-    # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-    indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool().to(inputs.device) & masked_indices
-    inputs[indices_replaced] =  speical_token_ids
-
-    return inputs, labels
-
-def replace_special_token_with_mask(inputs, speical_token_ids, tokenizer, mlm_probability):
-    """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
-    labels = inputs.clone()
-    probability_matrix = torch.full(labels.shape,0.0).to(inputs.device)   
-    probability_matrix.masked_fill_(labels.eq(speical_token_ids).to(inputs.device), value=mlm_probability)
-    masked_indices = torch.bernoulli(probability_matrix).bool() # will decide who will be masked
-    labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-    # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-    indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool().to(inputs.device) & masked_indices
-    inputs[indices_replaced] =tokenizer.convert_tokens_to_ids(tokenizer.mask_token) 
-
-    return inputs, labels
-
 def train(args, model, tokenizer,pool):
 
     """ Train the model """
-    if args.data_aug_type ==  "replace_type" :
-        train_dataset=TextDataset(tokenizer, args, args.train_data_file, pool)
-    else:
-        # if "unixcoder" in args.model_name_or_path or "coco" in args.model_name_or_path :
-        train_dataset=TextDataset_unixcoder(tokenizer, args, args.train_data_file, pool)
-        # else:
-        #     train_dataset=TextDataset(tokenizer, args, args.train_data_file, pool)
+    train_dataset = TextDataset(tokenizer, args, args.train_data_file, pool)
     train_sampler = RandomSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,num_workers=4,drop_last=True)
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, num_workers=4, drop_last=True)
 
     model.to(args.device)
     if args.local_rank not in [-1, 0]:
@@ -566,28 +330,18 @@ def train(args, model, tokenizer,pool):
     model.train()
     tr_num,tr_loss,best_mrr=0,0,-1
     loss_fct = CrossEntropyLoss()
-    # if args.model_type ==  "multi-loss-cocosoda" :
-    if args.model_type in  ["no_aug_cocosoda", "multi-loss-cocosoda"]  :
-        if args.do_continue_pre_trained:
-            logger.info("do_continue_pre_trained")
-        elif args.do_fine_tune:
-            logger.info("do_fine_tune")
-    special_token_list = special_token[args.lang]
-    special_token_id_list = tokenizer.convert_tokens_to_ids(special_token_list)
 
     for idx in range(args.num_train_epochs): 
         for step,batch in enumerate(train_dataloader):
-           
-                          #get inputs
             code_inputs = batch[0].to(args.device)    
-            nl_inputs = batch[1].to(args.device)
-            #get code and nl vectors
-            code_vec = model(code_inputs=code_inputs)
-            nl_vec = model(nl_inputs=nl_inputs)
+            clcode_inputs = batch[1].to(args.device)
 
-            tr_num+=1  
+            code_vec = model(code_inputs=code_inputs)
+            clcode_vec = model(clcode_inputs=clcode_inputs)
+
+            tr_num+=1
             #calculate scores and loss
-            scores = torch.einsum("ab,cb->ac",nl_vec,code_vec)
+            scores = torch.einsum("ab,cb->ac",clcode_vec,code_vec)
             
             loss = loss_fct(scores*20, torch.arange(code_inputs.size(0), device=scores.device))
 
@@ -628,24 +382,16 @@ def train(args, model, tokenizer,pool):
 def  multi_lang_continue_pre_train(args, model, tokenizer,pool):
     """ Train the model """
     #get training dataset
-    if "unixcoder" in args.model_name_or_path:
-        train_datasets = []
-        for train_data_file in args.couninue_pre_train_data_files:
-            train_dataset=TextDataset_unixcoder(tokenizer, args, train_data_file, pool)
-            train_datasets.append(train_dataset)
-    else:
-        train_datasets = []
-        for train_data_file in args.couninue_pre_train_data_files:
-            train_dataset=TextDataset(tokenizer, args, train_data_file, pool)
-            train_datasets.append(train_dataset)
+    train_datasets = []
+    for train_data_file in args.couninue_pre_train_data_files:
+        train_dataset=TextDataset(tokenizer, args, train_data_file, pool)
+        train_datasets.append(train_dataset)
 
     train_samplers = [RandomSampler(train_dataset) for train_dataset in train_datasets]
-    # https://blog.csdn.net/weixin_44966641/article/details/124878064
     train_dataloaders = [cycle(DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,drop_last=True)) for train_dataset,train_sampler in zip(train_datasets,train_samplers)]
     t_total = args.max_steps
 
     #get optimizer and scheduler
-    # Prepare optimizer and schedule (linear warmup and decay)https://huggingface.co/transformers/v3.3.1/training.html
     model.to(args.device)
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  
@@ -675,13 +421,7 @@ def  multi_lang_continue_pre_train(args, model, tokenizer,pool):
     if os.path.exists(optimizer_last):
         optimizer.load_state_dict(torch.load(optimizer_last, map_location="cpu"))    
     if args.local_rank == 0:
-        torch.distributed.barrier()         
-    if args.fp16:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
+        torch.distributed.barrier()
 
     # multi-gpu training (should be after apex fp16 initialization)
     if args.n_gpu > 1:
@@ -707,61 +447,45 @@ def  multi_lang_continue_pre_train(args, model, tokenizer,pool):
     step=0
     tr_loss, logging_loss,avg_loss,tr_nb, best_mrr = 0.0, 0.0,0.0,0,-1
     tr_num=0
-    special_token_list = all_special_token 
-    special_token_id_list = tokenizer.convert_tokens_to_ids(special_token_list)
-    while True: 
-        
+
+    while True:        
         train_dataloader=np.random.choice(train_dataloaders, 1, p=probs)[0]
-        # train_dataloader=train_dataloader[0]
         step+=1
         batch=next(train_dataloader)
-        # source_ids= batch.to(args.device)
         model.train()
-        # loss = model(source_ids)
         code_inputs = batch[0].to(args.device)  
         code_transformations_ids = code_inputs.clone()
-        nl_inputs = batch[1].to(args.device)
-        nl_transformations_ids= nl_inputs.clone()
+        clcode_inputs = batch[1].to(args.device)
         
-        if step%4 == 0:
-            code_transformations_ids[:, 3:], _ = mask_tokens(code_inputs.clone()[:, 3:] ,tokenizer,args.mlm_probability)
-            nl_transformations_ids[:, 3:], _ = mask_tokens(nl_inputs.clone()[:, 3:] ,tokenizer,args.mlm_probability)
-        elif step%4 == 1:
-            code_types = code_inputs.clone()
-            code_transformations_ids[:, 3:], _ = replace_with_type_tokens(code_inputs.clone()[:, 3:] ,code_types.clone()[:, 3:],tokenizer,args.mlm_probability)
-        elif step%4 == 2:
-            random.seed( step)
-            choice_token_id  = choice(special_token_id_list)
-            code_transformations_ids[:, 3:], _ = replace_special_token_with_type_tokens(code_inputs.clone()[:, 3:], choice_token_id, tokenizer,args.mlm_probability)
-        elif step%4 == 3:
-            random.seed( step)
-            choice_token_id  = choice(special_token_id_list)
-            code_transformations_ids[:, 3:], _ = replace_special_token_with_mask(code_inputs.clone()[:, 3:], choice_token_id, tokenizer,args.mlm_probability)
+        # TODO: CODE AUGMENTATION
+        # if step%4 == 0:
+        #     code_transformations_ids[:, 3:], _ = mask_tokens(code_inputs.clone()[:, 3:] ,tokenizer,args.mlm_probability)
+        #     nl_transformations_ids[:, 3:], _ = mask_tokens(clcode_inputs.clone()[:, 3:] ,tokenizer,args.mlm_probability)
+        # elif step%4 == 1:
+        #     code_types = code_inputs.clone()
+        #     code_transformations_ids[:, 3:], _ = replace_with_type_tokens(code_inputs.clone()[:, 3:] ,code_types.clone()[:, 3:],tokenizer,args.mlm_probability)
+        # elif step%4 == 2:
+        #     random.seed( step)
+        #     choice_token_id  = choice(special_token_id_list)
+        #     code_transformations_ids[:, 3:], _ = replace_special_token_with_type_tokens(code_inputs.clone()[:, 3:], choice_token_id, tokenizer,args.mlm_probability)
+        # elif step%4 == 3:
+        #     random.seed( step)
+        #     choice_token_id  = choice(special_token_id_list)
+        #     code_transformations_ids[:, 3:], _ = replace_special_token_with_mask(code_inputs.clone()[:, 3:], choice_token_id, tokenizer,args.mlm_probability)
         
 
         tr_num+=1   
-        inter_output, inter_target, _, _= model(source_code_q=code_inputs, source_code_k=code_transformations_ids, 
-                                    nl_q=nl_inputs , nl_k=nl_transformations_ids )
-        
-        
-        
-        # loss_fct = CrossEntropyLoss()
+        inter_output, inter_target, _, _= model(source_code_q=code_inputs, source_code_k=code_transformations_ids, clean_code_q=clcode_inputs)        
         loss = loss_fct(20*inter_output, inter_target)
 
         if args.n_gpu > 1:
             loss = loss.mean() # mean() to average on multi-gpu parallel training
-
             
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
-
-        if args.fp16:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
-            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-        else:
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+        
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
         tr_loss += loss.item()
         if (step+1)% args.eval_frequency==0:
@@ -866,29 +590,29 @@ def evaluate(args, model, tokenizer,file_name,pool, eval_when_training=False):
     model.eval()
     model_eval = model.module if hasattr(model,'module') else model
     code_vecs=[] 
-    nl_vecs=[]
+    clcode_vecs=[]
     for batch in query_dataloader:  
-        nl_inputs = batch[-1].to(args.device)
+        clcode_inputs = batch[-1].to(args.device)
         with torch.no_grad():
             if args.model_type ==  "base" :
-                nl_vec = model(nl_inputs=nl_inputs) 
+                clcode_vec = model(clcode_inputs=clcode_inputs) 
 
-            elif args.model_type in  ["cocosoda" ,"no_aug_cocosoda", "multi-loss-cocosoda"]:
-                outputs = model_eval.nl_encoder_q(nl_inputs, attention_mask=nl_inputs.ne(1))
+            elif args.model_type in  ["clean-code"]:
+                outputs = model_eval.nl_encoder_q(clcode_inputs, attention_mask=clcode_inputs.ne(1))
                 if args.agg_way == "avg":
                     outputs = outputs [0]
-                    nl_vec = (outputs*nl_inputs.ne(1)[:,:,None]).sum(1)/nl_inputs.ne(1).sum(-1)[:,None] # None作为ndarray或tensor的索引作用是增加维度，
+                    clcode_vec = (outputs*clcode_inputs.ne(1)[:,:,None]).sum(1)/clcode_inputs.ne(1).sum(-1)[:,None] # None作为ndarray或tensor的索引作用是增加维度，
                 elif args.agg_way == "cls_pooler":
-                    nl_vec =outputs [1]
+                    clcode_vec =outputs [1]
                 elif args.agg_way == "avg_cls_pooler":
-                     nl_vec =outputs [1] +  (outputs[0]*nl_inputs.ne(1)[:,:,None]).sum(1)/nl_inputs.ne(1).sum(-1)[:,None] 
-                nl_vec  = torch.nn.functional.normalize( nl_vec, p=2, dim=1)
+                     clcode_vec =outputs [1] +  (outputs[0]*clcode_inputs.ne(1)[:,:,None]).sum(1)/clcode_inputs.ne(1).sum(-1)[:,None] 
+                clcode_vec  = torch.nn.functional.normalize( clcode_vec, p=2, dim=1)
                 if args.do_whitening:
-                    nl_vec=whitening_torch_final(nl_vec)
+                    clcode_vec=whitening_torch_final(clcode_vec)
 
 
             
-            nl_vecs.append(nl_vec.cpu().numpy()) 
+            clcode_vecs.append(clcode_vec.cpu().numpy()) 
 
     for batch in code_dataloader:
         with torch.no_grad():
@@ -913,11 +637,11 @@ def evaluate(args, model, tokenizer,file_name,pool, eval_when_training=False):
             
             code_vecs.append(code_vec.cpu().numpy())  
 
-    model.train()    
+    model.train()
     code_vecs=np.concatenate(code_vecs,0)
-    nl_vecs=np.concatenate(nl_vecs,0)
+    clcode_vecs=np.concatenate(clcode_vecs,0)
 
-    scores=np.matmul(nl_vecs,code_vecs.T)
+    scores=np.matmul(clcode_vecs,code_vecs.T)
     
     sort_ids=np.argsort(scores, axis=-1, kind='quicksort', order=None)[:,::-1]    
     
@@ -1046,8 +770,8 @@ def parse_args():
     parser.add_argument("--tokenizer_name", default="microsoft/graphcodebert-base", type=str,
                         help="Optional pretrained tokenizer name or path if not the same as model_name_or_path")
     
-    parser.add_argument("--nl_length", default=50, type=int,
-                        help="Optional NL input sequence length after tokenization.")    
+    parser.add_argument("--clcode_length", default=100, type=int,
+                        help="Optional Clean Code input sequence length after tokenization.")    
     parser.add_argument("--code_length", default=100, type=int,
                         help="Optional Code input sequence length after tokenization.") 
     parser.add_argument("--data_flow_length", default=0, type=int,

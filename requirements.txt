@@ -1,4 +1,5 @@
-tree-sitter
-torch
+torch==1.13.1+cu117
 transformers
+tree_sitter
+prettytable
 kaggle
